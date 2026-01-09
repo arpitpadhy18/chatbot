@@ -185,62 +185,129 @@ async def upload_document(file: UploadFile = File(...)):
         raise HTTPException(status_code=500, detail=f"Error processing document: {str(e)}")
     
 
+# @app.post("/chat", response_model=ChatResponse)
+# async def chat(req: ChatRequest):
+#     """Ask a question about uploaded documents."""
+#     try:
+#         if not req.question.strip():
+#             raise HTTPException(status_code=400, detail="Question cannot be empty")
+        
+#         # Retrieve relevant context
+#         context = rag.query(req.question, top_k=req.top_k)
+        
+#         if not context:
+#             return ChatResponse(
+#                 answer="I don't have any documents to answer from. Please upload a document first.",
+#                 sources=[],
+#                 num_sources=0
+#             )
+        
+#         # Build prompt
+#         prompt = f"""You are a helpful assistant that answers questions based ONLY on the provided context.
+
+#                         Context:
+#                         {chr(10).join(f"[{i+1}] {chunk}" for i, chunk in enumerate(context))}
+
+#                         Question: {req.question}
+
+#                         Instructions:
+#                         - Answer based ONLY on the context above
+#                         - If the context doesn't contain enough information, say so
+#                         - Be concise and accurate
+#                         - If there is no relevant information in uploaded documents, respond on your own knowledge
+#                         - Cite which context section(s) you used (e.g., [1], [2])
+#                         - greet the user politely
+#                         - if some one ask which type of bot are you anlyze the document and respond accordingly
+#                         - greet the user politely even when no relevant information is found
+#                    """
+
+#         # Get completion from Groq
+#         completion = client.chat.completions.create(
+#             model="llama-3.1-8b-instant",
+#             messages=[{"role": "user", "content": prompt}],
+#             max_tokens=500,
+#             temperature=0.3  # Lower temperature for more focused answers
+#         )
+        
+#         answer = completion.choices[0].message.content
+        
+#         return ChatResponse(
+#             answer=answer,
+#             sources=context,
+#             num_sources=len(context)
+#         )
+#     except HTTPException:
+#         raise
+#     except Exception as e:
+#         raise HTTPException(status_code=500, detail=f"Error generating response: {str(e)}")
+
 @app.post("/chat", response_model=ChatResponse)
 async def chat(req: ChatRequest):
     """Ask a question about uploaded documents."""
     try:
         if not req.question.strip():
             raise HTTPException(status_code=400, detail="Question cannot be empty")
-        
-        # Retrieve relevant context
-        context = rag.query(req.question, top_k=req.top_k)
-        
-        if not context:
+
+        # 🔹 Retrieve chunks + source files
+        chunks, sources = rag.query_with_sources(
+            req.question,
+            top_k=req.top_k
+        )
+
+        if not chunks:
             return ChatResponse(
                 answer="I don't have any documents to answer from. Please upload a document first.",
                 sources=[],
                 num_sources=0
             )
-        
-        # Build prompt
-        prompt = f"""You are a helpful assistant that answers questions based ONLY on the provided context.
 
-                        Context:
-                        {chr(10).join(f"[{i+1}] {chunk}" for i, chunk in enumerate(context))}
+        # 🔹 Build context
+        context_text = "\n".join(
+            f"[{i+1}] {chunk}" for i, chunk in enumerate(chunks)
+        )
 
-                        Question: {req.question}
+        prompt = f"""
+You are a helpful assistant that answers questions based ONLY on the provided context.
 
-                        Instructions:
-                        - Answer based ONLY on the context above
-                        - If the context doesn't contain enough information, say so
-                        - Be concise and accurate
-                        - If there is no relevant information in uploaded documents, respond on your own knowledge
-                        - Cite which context section(s) you used (e.g., [1], [2])
-                        - greet the user politely
-                        - if some one ask which type of bot are you anlyze the document and respond accordingly
-                        - greet the user politely even when no relevant information is found
-                   """
+Context:
+{context_text}
 
-        # Get completion from Groq
+Question:
+{req.question}
+
+Instructions:
+- Answer based ONLY on the context above
+- If information is missing, say so clearly
+- Be concise and accurate
+- Cite context sections like [1], [2]
+- Greet the user politely
+- If asked what type of bot you are, explain based on uploaded documents
+"""
+
+        # 🔹 Groq call
         completion = client.chat.completions.create(
             model="llama-3.1-8b-instant",
             messages=[{"role": "user", "content": prompt}],
             max_tokens=500,
-            temperature=0.3  # Lower temperature for more focused answers
+            temperature=0.3
         )
-        
+
         answer = completion.choices[0].message.content
-        
+
         return ChatResponse(
             answer=answer,
-            sources=context,
-            num_sources=len(context)
+            sources=sources,          # ✅ FILE NAMES
+            num_sources=len(sources)
         )
+
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error generating response: {str(e)}")
-    
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error generating response: {str(e)}"
+        )
+
 @app.get("/stats")
 async def get_stats():
     """Get statistics about stored documents."""
