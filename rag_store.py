@@ -126,3 +126,32 @@ class RAGStore:
             "total_chunks": self.collection.count(),
             "collection": self.collection.name
         }
+    def list_files(self):
+        """
+        Return list of unique uploaded file names
+        """
+        data = self.collection.get(include=["metadatas"])
+
+        if not data or "metadatas" not in data:
+            return []
+
+        sources = set()
+
+        for meta in data["metadatas"]:
+            if meta and "source" in meta:
+                sources.add(meta["source"])
+
+        return list(sources)
+    
+    def delete_by_file(self, filename: str):
+        results = self.collection.get(
+        where={"source": filename}
+    )
+
+        ids = results.get("ids", [])
+
+        if not ids:
+          return 0
+
+        self.collection.delete(ids=ids)
+        return len(ids)

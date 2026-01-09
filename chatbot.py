@@ -35,28 +35,53 @@ class ChatResponse(BaseModel):
     sources: List[str]
     num_sources: int
     
-def chunk_text(text:str, chunk_size:int = 500, overlap:int = 50) -> List[str]:
+# def chunk_text(text:str, chunk_size:int = 500, overlap:int = 50) -> List[str]:
+#     chunks = []
+#     start = 0
+#     text_length = len(text)
+    
+#     while start < text_length:
+#         end = start + chunk_size
+#         chunks=text[start:end]
+        
+#         if end > text_length:
+#             last_period = chunk.rfind('.')
+#             last_newline = chunk.rfind('\n')
+#             boundary = max(last_period, last_newline)
+            
+#             if boundary > chunk_size // 2:
+#                 chunk = chunk[:boundary + 1]
+#                 end = start + len(chunk)
+                
+#         chunks.append(chunk.strip())
+#         start = end - overlap
+    
+#     return [c for c in chunks if len(c.strip()) > 50]
+def chunk_text(text: str, chunk_size: int = 500, overlap: int = 50) -> List[str]:
     chunks = []
     start = 0
     text_length = len(text)
-    
+
     while start < text_length:
         end = start + chunk_size
-        chunks=text[start:end]
-        
-        if end > text_length:
+        chunk = text[start:end]   # ✅ correct variable
+
+        if end < text_length:
             last_period = chunk.rfind('.')
             last_newline = chunk.rfind('\n')
             boundary = max(last_period, last_newline)
-            
+
             if boundary > chunk_size // 2:
                 chunk = chunk[:boundary + 1]
                 end = start + len(chunk)
-                
-        chunks.append(chunk.strip())
+
+        chunk = chunk.strip()
+        if len(chunk) > 50:
+            chunks.append(chunk)
+
         start = end - overlap
-    
-    return [c for c in chunks if len(c.strip()) > 50]
+
+    return chunks
 
 def read_file(file: UploadFile) -> str:
     """Extract text from uploaded file."""
@@ -226,3 +251,24 @@ async def clear_documents():
     """Clear all stored documents."""
     rag.clear()
     return {"message": "All documents cleared"}
+
+@app.get("/files")
+async def list_files():
+    return {
+        "files": rag.list_files()
+    }
+
+@app.delete("/files/{filename}")
+async def delete_file(filename: str):
+    deleted = rag.delete_by_file(filename)
+
+    if deleted == 0:
+        raise HTTPException(
+            status_code=404,
+            detail="File not found"
+        )
+
+    return {
+        "message": f"{filename} deleted successfully",
+        "deleted_chunks": deleted
+    }
