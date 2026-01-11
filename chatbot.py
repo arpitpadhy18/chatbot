@@ -9,6 +9,11 @@ from typing import List
 import xml.etree.ElementTree as ET
 import pandas as pd
 from io import BytesIO
+from lang_utilities import detect_language
+from lang_prompt import get_language_instruction
+##newwww
+from collections import defaultdict, deque
+
 
 app = FastAPI()
 
@@ -17,7 +22,9 @@ app.add_middleware(
     allow_origins=["*"],
     allow_methods=["*"],
     allow_headers=["*"],
-)
+)   
+
+
 
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 if not GROQ_API_KEY:
@@ -25,38 +32,28 @@ if not GROQ_API_KEY:
 
 client = Groq(api_key=GROQ_API_KEY)
 rag = RAGStore()
+chat_memory = defaultdict(lambda: deque(maxlen=5))
 
 class ChatRequest(BaseModel):
     question: str
     top_k: int = 3
+    session_id: str = "default"
     
 class ChatResponse(BaseModel):
     answer: str
     sources: List[str]
     num_sources: int
-    
-# def chunk_text(text:str, chunk_size:int = 500, overlap:int = 50) -> List[str]:
-#     chunks = []
-#     start = 0
-#     text_length = len(text)
-    
-#     while start < text_length:
-#         end = start + chunk_size
-#         chunks=text[start:end]
-        
-#         if end > text_length:
-#             last_period = chunk.rfind('.')
-#             last_newline = chunk.rfind('\n')
-#             boundary = max(last_period, last_newline)
-            
-#             if boundary > chunk_size // 2:
-#                 chunk = chunk[:boundary + 1]
-#                 end = start + len(chunk)
-                
-#         chunks.append(chunk.strip())
-#         start = end - overlap
-    
-#     return [c for c in chunks if len(c.strip()) > 50]
+
+class PreviewResponse(BaseModel):
+    filename: str
+    preview_chunks: List[str]
+    total_chunks: int
+
+# class ChatRequest(BaseModel):
+#     question: str
+#     top_k: int = 3
+#     session_id: str = "default"
+
 def chunk_text(text: str, chunk_size: int = 500, overlap: int = 50) -> List[str]:
     chunks = []
     start = 0
@@ -64,7 +61,7 @@ def chunk_text(text: str, chunk_size: int = 500, overlap: int = 50) -> List[str]
 
     while start < text_length:
         end = start + chunk_size
-        chunk = text[start:end]   # ✅ correct variable
+        chunk = text[start:end]
 
         if end < text_length:
             last_period = chunk.rfind('.')
@@ -183,7 +180,7 @@ async def upload_document(file: UploadFile = File(...)):
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error processing document: {str(e)}")
-    
+
 
 # @app.post("/chat", response_model=ChatResponse)
 # async def chat(req: ChatRequest):
@@ -191,64 +188,82 @@ async def upload_document(file: UploadFile = File(...)):
 #     try:
 #         if not req.question.strip():
 #             raise HTTPException(status_code=400, detail="Question cannot be empty")
-        
-#         # Retrieve relevant context
-#         context = rag.query(req.question, top_k=req.top_k)
-        
-#         if not context:
+
+#         chunks, sources = rag.query_with_sources(
+#             req.question,
+#             top_k=req.top_k
+#         )
+
+#         if not chunks:
 #             return ChatResponse(
 #                 answer="I don't have any documents to answer from. Please upload a document first.",
 #                 sources=[],
 #                 num_sources=0
 #             )
-        
-#         # Build prompt
-#         prompt = f"""You are a helpful assistant that answers questions based ONLY on the provided context.
 
-#                         Context:
-#                         {chr(10).join(f"[{i+1}] {chunk}" for i, chunk in enumerate(context))}
+#         context_text = "\n".join(
+#             f"[{i+1}] {chunk}" for i, chunk in enumerate(chunks)
+#         )
 
-#                         Question: {req.question}
+       
+#         lang_code = detect_language(context_text)
 
-#                         Instructions:
-#                         - Answer based ONLY on the context above
-#                         - If the context doesn't contain enough information, say so
-#                         - Be concise and accurate
-#                         - If there is no relevant information in uploaded documents, respond on your own knowledge
-#                         - Cite which context section(s) you used (e.g., [1], [2])
-#                         - greet the user politely
-#                         - if some one ask which type of bot are you anlyze the document and respond accordingly
-#                         - greet the user politely even when no relevant information is found
-#                    """
+      
+#         language_instruction = get_language_instruction(lang_code)
 
-#         # Get completion from Groq
+#         prompt = f"""
+# You are a helpful assistant that answers questions based ONLY on the provided context.
+
+# {language_instruction}
+
+# Context:
+# {context_text}
+
+# Question:
+# {req.question}
+
+# Instructions:
+# - Answer based ONLY on the context above
+# - If information is missing, say so clearly
+# - Be concise and accurate
+# - Cite context sections like [1], [2]
+# - Greet the user politely
+# - If asked what type of bot you are, explain based on uploaded documents
+# - greet only first time
+# - give short answer some time
+# """
+
+#         # 🔹 Groq call
 #         completion = client.chat.completions.create(
 #             model="llama-3.1-8b-instant",
 #             messages=[{"role": "user", "content": prompt}],
 #             max_tokens=500,
-#             temperature=0.3  # Lower temperature for more focused answers
+#             temperature=0.3
 #         )
-        
+
 #         answer = completion.choices[0].message.content
-        
+
 #         return ChatResponse(
 #             answer=answer,
-#             sources=context,
-#             num_sources=len(context)
+#             sources=sources,
+#             num_sources=len(sources)
 #         )
+
 #     except HTTPException:
 #         raise
 #     except Exception as e:
-#         raise HTTPException(status_code=500, detail=f"Error generating response: {str(e)}")
+#         raise HTTPException(
+#             status_code=500,
+#             detail=f"Error generating response: {str(e)}"
+#         )
 
 @app.post("/chat", response_model=ChatResponse)
 async def chat(req: ChatRequest):
-    """Ask a question about uploaded documents."""
     try:
         if not req.question.strip():
             raise HTTPException(status_code=400, detail="Question cannot be empty")
 
-        # 🔹 Retrieve chunks + source files
+        # 🔹 1. Retrieve relevant chunks
         chunks, sources = rag.query_with_sources(
             req.question,
             top_k=req.top_k
@@ -261,30 +276,48 @@ async def chat(req: ChatRequest):
                 num_sources=0
             )
 
-        # 🔹 Build context
+        # 🔹 2. Build context
         context_text = "\n".join(
             f"[{i+1}] {chunk}" for i, chunk in enumerate(chunks)
         )
 
+        # 🔴 3. FETCH PAST QUESTIONS (ADD HERE)
+        history = chat_memory[req.session_id]
+
+        history_text = ""
+        if history:
+            history_text = "\n".join(
+                f"Q: {h['question']}\nA: {h['answer']}"
+                for h in history
+            )
+
+        # 🔹 4. Language detection
+        lang_code = detect_language(context_text)
+        language_instruction = get_language_instruction(lang_code)
+
+        # 🔴 5. MODIFY PROMPT (ADD history_text)
         prompt = f"""
 You are a helpful assistant that answers questions based ONLY on the provided context.
+
+{language_instruction}
+
+Previous Conversation:
+{history_text}
 
 Context:
 {context_text}
 
-Question:
+Current Question:
 {req.question}
 
 Instructions:
-- Answer based ONLY on the context above
-- If information is missing, say so clearly
-- Be concise and accurate
+- Use previous conversation only if relevant
+- Answer based on context
+- If information is missing, say so
 - Cite context sections like [1], [2]
-- Greet the user politely
-- If asked what type of bot you are, explain based on uploaded documents
 """
 
-        # 🔹 Groq call
+        # 🔹 6. LLM call
         completion = client.chat.completions.create(
             model="llama-3.1-8b-instant",
             messages=[{"role": "user", "content": prompt}],
@@ -294,9 +327,16 @@ Instructions:
 
         answer = completion.choices[0].message.content
 
+        # 🔴 7. STORE QUESTION + ANSWER (ADD HERE)
+        chat_memory[req.session_id].append({
+            "question": req.question,
+            "answer": answer
+        })
+
+        # 🔹 8. Return response
         return ChatResponse(
             answer=answer,
-            sources=sources,          # ✅ FILE NAMES
+            sources=sources,
             num_sources=len(sources)
         )
 
@@ -308,12 +348,13 @@ Instructions:
             detail=f"Error generating response: {str(e)}"
         )
 
+
 @app.get("/stats")
 async def get_stats():
     """Get statistics about stored documents."""
     return rag.get_stats()
 
-@app.delete("/clear")
+@app.delete("/resetdocs")
 async def clear_documents():
     """Clear all stored documents."""
     rag.clear()
@@ -338,4 +379,47 @@ async def delete_file(filename: str):
     return {
         "message": f"{filename} deleted successfully",
         "deleted_chunks": deleted
+    }
+    
+@app.get("/preview/{filename}", response_model=PreviewResponse)
+async def preview_file(filename: str, limit: int = 3):
+    """
+    Preview a document without querying LLM
+    """
+    try:
+        chunks = rag.preview_file(filename, limit=limit)
+
+        if not chunks:
+            raise HTTPException(
+                status_code=404,
+                detail="File not found or no content available"
+            )
+
+        return PreviewResponse(
+            filename=filename,
+            preview_chunks=chunks,
+            total_chunks=len(chunks)
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error previewing file: {str(e)}"
+        )
+
+@app.get("/chat-history")
+async def get_chat_history():
+    session_id = "default"
+
+    if session_id not in chat_memory or not chat_memory[session_id]:
+        return {
+            "history": [],
+            "message": "No past questions found"
+        }
+
+    return {
+        "history": list(chat_memory[session_id]),
+        "total_questions": len(chat_memory[session_id])
     }
