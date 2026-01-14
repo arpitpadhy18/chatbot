@@ -14,7 +14,7 @@ function Documents({ files, activeFile, onUpload, onSelect, onDelete, onChatNavi
                     </div>
                     <div className="flex flex-col">
                         <h1 className="text-white text-base font-semibold leading-none">DocManager</h1>
-                        <p className="text-bolt-secondary text-xs font-normal mt-1">Enterprise Workspace</p>
+                        <p className="text-bolt-secondary text-xs font-normal mt-1"> Workspace</p>
                     </div>
                 </div>
 
