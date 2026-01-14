@@ -28,7 +28,6 @@ A modern, full-stack web application that allows users to upload documents (PDF,
 -   **PyPDF & Pandas** (Data Extraction)
 
 ---
-
 ## 📦 Installation & Setup
 
 ### Prerequisites
